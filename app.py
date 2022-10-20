@@ -14,8 +14,8 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import plotly.io as pio
-pio.renderers.default = 'browser'
-
+# pio.renderers.default = 'browser'
+#
 from dash import Dash, dcc, html
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
@@ -77,6 +77,31 @@ def parse_to_gsc(n):
     return str_out
 
 
+def calc_change(col_value):
+    df = load_all_data()
+    df = df.sort_values(['名称', 'Datetime']).reset_index(drop=True)
+    df['chg'] = df.groupby('名称')[col_value].diff()
+    df_chg = df.groupby('名称')['chg'].nth(-1)
+    df_chg = df_chg.sort_values(ascending=False)
+    df_chg = df_chg.dropna()
+
+    return df_chg
+
+
+def calc_dist_to_mean(col_value, n_obs=10):
+    df = load_all_data()
+    df = df.sort_values(['名称', 'Datetime']).reset_index(drop=True)
+    df['mean'] = df.groupby('名称')[col_value].apply(
+        lambda x: x.rolling(window=n_obs, min_periods=int(n_obs/2)).mean()
+    )
+    df['dtm'] = df[col_value] - df['mean']
+    df_dtm = df.groupby('名称')['dtm'].nth(-1)
+    df_dtm = df_dtm.sort_values(ascending=False)
+    df_dtm = df_dtm.dropna()
+
+    return df_dtm
+
+
 # APP LAYOUT
 input_textarea = dcc.Textarea(
     id='input_textarea',
@@ -87,6 +112,16 @@ button_upload = dbc.Button(
     "Upload", id='button_upload',
     color="primary", className="me-1", n_clicks=0
 )
+button_clearall = dbc.Button(
+    'Clear All', id='button_clearall',
+    color='primary', className='me-1', n_clicks=0
+)
+alert_upload = dbc.Alert(
+    id='alert_upload',
+    is_open=False,
+    dismissable=True,
+    duration=4000,
+)
 button_refresh_graph = dbc.Button(
     'Refresh', id='button_refresh_graph',
     color='primary', className='me-1', n_clicks=0
@@ -95,10 +130,10 @@ button_select_all = dbc.Button(
     "Select All", id='button_select_all',
     color="primary", className="me-1", n_clicks=0
 )
-output_feedback = html.Div(
-    id='output_feedback',
-    style={'whiteSpace': 'pre-line'}
-)
+# output_feedback = html.Div(
+#     id='output_feedback',
+#     style={'whiteSpace': 'pre-line'}
+# )
 _LS_ITEMS = get_unique_items()
 _LS_ITEMS_NUM = 10
 input_items = html.Div([
@@ -119,6 +154,10 @@ input_value = html.Div([
     )
 ], className='mb-3')
 graph_price = dcc.Graph(id='graph_price')
+graph_pricechg = dcc.Graph(id='graph_pricechg')
+graph_volumechg = dcc.Graph(id='graph_volumechg')
+graph_pricedtm = dcc.Graph(id='graph_pricedtm')
+graph_volumedtm = dcc.Graph(id='graph_volumedtm')
 app.title = 'AuctionViewer'
 app.layout = dbc.Container(
     children=[
@@ -127,14 +166,26 @@ app.layout = dbc.Container(
         html.H4('Uploader: '),
         dbc.Row(input_textarea),
         html.Hr(),
-        dbc.Row(button_upload),
-        dbc.Row(output_feedback),
+        dbc.Row([
+            dbc.Col(button_upload, width='auto'),
+            dbc.Col(button_clearall, width='auto'),
+            dbc.Col(button_refresh_graph, width='auto'),
+        ]),
+        dbc.Row(alert_upload),
         html.Hr(),
-        html.H4('Viewer: '),
+        html.H4('Top Movers: '),
+        dbc.Row([
+            dbc.Col(graph_pricechg),
+            dbc.Col(graph_volumechg)
+        ]),
+        dbc.Row([
+            dbc.Col(graph_pricedtm),
+            dbc.Col(graph_volumedtm),
+        ]),
+        html.Hr(),
         dbc.Row(input_items),
         dbc.Row(input_value),
         dbc.Row([
-            dbc.Col(button_refresh_graph, width=1),
             dbc.Col(button_select_all, width=2),
         ]),
         html.Hr(),
@@ -144,7 +195,11 @@ app.layout = dbc.Container(
 
 
 @app.callback(
-    Output('output_feedback', 'children'),
+    [
+        Output('alert_upload', 'is_open'),
+        Output('alert_upload', 'children'),
+        Output('alert_upload', 'color'),
+    ],
     Input('button_upload', 'n_clicks'),
     State('input_textarea', 'value')
 )
@@ -154,25 +209,42 @@ def upload_data(n_clicks, str_csv):
         raise PreventUpdate
 
     if (str_csv is None) or (len(str_csv) == 0):
-        str_out = 'Nothing to be uploaded.'
-        return str_out
+        alert_open = True
+        alert_str = 'Nothing to be uploaded.'
+        alert_color = 'warning'
+        return [alert_open, alert_str, alert_color]
 
     str_io = StringIO(str_csv)
     df = pd.read_csv(str_io, sep=',')
     checked = check_data(df)
     if not checked:
-        str_out = f"Wrong file/string format. Not uploaded. "
+        alert_str = f"Wrong file/string format. Not uploaded. "
+        alert_color = 'danger'
     else:
         now = datetime.datetime.now()
         fname = f"{now:%Y%m%d.%H%M%S}.csv"
         fpath = os.path.join(DIR_DATA, fname)
         try:
             df.to_csv(fpath, index=False)
-            str_out = f"SUCCESS. Uploaded to: {fpath}"
+            alert_str = f"[{n_clicks}] SUCCESS. Uploaded to: {fpath}"
+            alert_color = 'success'
         except Exception as e:
-            str_out = f"FAILED with Error: {e}"
+            alert_str = f"FAILED with Error: {e}"
+            alert_color = 'danger'
 
-    return str_out
+    return [True, alert_str, alert_color]
+
+
+@app.callback(
+    Output('input_textarea', 'value'),
+    Input('button_clearall', 'n_clicks')
+)
+def clear_textarea(n_clicks):
+    print(f"clear_textarea.n_clicks: {n_clicks}")
+    if (n_clicks is None) or (n_clicks == 0):
+        raise PreventUpdate
+
+    return ''
 
 
 @app.callback(
@@ -231,12 +303,15 @@ def graph_items(n_clicks, items, value):
         )
         fig.add_trace(go.Scatter(
             x=df['Datetime'], y=df['价格'],
-            name=items[0], mode='markers+lines'
+            mode='markers+lines',
+            name=items[0],
+            line_shape='hv',
         ), row=1, col=1)
         fig.add_trace(go.Scatter(
             x=df['Datetime'], y=df['可购买'],
             mode='markers+lines',
-            name='可购买'
+            name='可购买',
+            line_shape='hv',
         ), row=2, col=1)
         fig.update_yaxes(title_text='价格(g)', **_params_update_axes,
                          row=1, col=1)
@@ -246,6 +321,7 @@ def graph_items(n_clicks, items, value):
         title = items[0]
     else:
         fig = px.line(df, x='Datetime', y=value, color='名称', markers=True,
+                      line_shape='hv',
                       hover_data=['gsc'])
         y_title_text = '价格(g)' if value == '价格' else '可购买'
         fig.update_yaxes(title_text=y_title_text, **_params_update_axes)
@@ -261,6 +337,76 @@ def graph_items(n_clicks, items, value):
     )
 
     return fig
+
+
+@app.callback(
+    [
+        Output('graph_pricechg', 'figure'),
+        Output('graph_volumechg', 'figure'),
+        Output('graph_pricedtm', 'figure'),
+        Output('graph_volumedtm', 'figure'),
+    ],
+    Input('button_refresh_graph', 'n_clicks'),
+)
+def graph_analysis(n_clicks):
+    # set threshold
+    thre_pxchg = 0.5 # 50silver
+    thre_volchg = 50
+    n_obs = 10
+    # price change
+    df_pxchg = calc_change(col_value='价格')
+    # convert to gold
+    df_pxchg /= 10000
+    # top movers
+    df_pxchg = pd.concat([df_pxchg.head(), df_pxchg.tail()])
+    fig_pxchg = px.bar(df_pxchg)
+    fig_pxchg.add_hline(y=thre_pxchg, line_color='green', line_dash='dot')
+    fig_pxchg.add_hline(y=-thre_pxchg, line_color='red', line_dash='dot')
+    fig_pxchg.update_traces(showlegend=False)
+    fig_pxchg.update_xaxes(**_params_update_axes)
+    fig_pxchg.update_yaxes(title_text='价格(g)', **_params_update_axes)
+    fig_pxchg.update_layout(title=f"价格 Top Movers", **_params_update_layout)
+    # fig_pxchg.show()
+
+    # volume change
+    df_volchg = calc_change(col_value='可购买')
+    df_volchg = pd.concat([df_volchg.head(), df_volchg.tail()])
+    fig_volchg = px.bar(df_volchg)
+    fig_volchg.add_hline(y=thre_volchg, line_color='green', line_dash='dot')
+    fig_volchg.add_hline(y=-thre_volchg, line_color='red', line_dash='dot')
+    fig_volchg.update_traces(showlegend=False)
+    fig_volchg.update_xaxes(**_params_update_axes)
+    fig_volchg.update_yaxes(title_text='可购买', **_params_update_axes)
+    fig_volchg.update_layout(title=f"可购买 Top Movers", **_params_update_layout)
+    # fig_volchg.show()
+
+    # price dtm
+    df_pxdtm = calc_dist_to_mean(col_value='价格', n_obs=n_obs)
+    # convert to gold
+    df_pxdtm /= 10000
+    # top movers
+    df_pxdtm = pd.concat([df_pxdtm.head(), df_pxdtm.tail()])
+    fig_pxdtm = px.bar(df_pxdtm)
+    fig_pxdtm.add_hline(y=thre_pxchg, line_color='green', line_dash='dot')
+    fig_pxdtm.add_hline(y=-thre_pxchg, line_color='red', line_dash='dot')
+    fig_pxdtm.update_traces(showlegend=False)
+    fig_pxdtm.update_xaxes(**_params_update_axes)
+    fig_pxdtm.update_yaxes(title_text='价格DTM(g)', **_params_update_axes)
+    fig_pxdtm.update_layout(title=f"价格 Dist-to-mean", **_params_update_layout)
+
+    # volume dtm
+    df_voldtm = calc_dist_to_mean(col_value='可购买', n_obs=n_obs)
+    df_voldtm = pd.concat([df_voldtm.head(), df_voldtm.tail()])
+    fig_voldtm = px.bar(df_voldtm)
+    fig_voldtm.add_hline(y=thre_volchg, line_color='green', line_dash='dot')
+    fig_voldtm.add_hline(y=-thre_volchg, line_color='red', line_dash='dot')
+    fig_voldtm.update_traces(showlegend=False)
+    fig_voldtm.update_xaxes(**_params_update_axes)
+    fig_voldtm.update_yaxes(title_text='可购买DTM', **_params_update_axes)
+    fig_voldtm.update_layout(title=f"可购买 Dist-to-mean",
+                             **_params_update_layout)
+
+    return fig_pxchg, fig_volchg, fig_pxdtm, fig_voldtm
 
 
 if __name__ == '__main__':
