@@ -320,9 +320,11 @@ def graph_items(n_clicks, items, value):
         fig.update_xaxes(**_params_update_axes)
         title = items[0]
     else:
-        fig = px.line(df, x='Datetime', y=value, color='名称', markers=True,
-                      line_shape='hv',
-                      hover_data=['gsc'])
+        fig = px.line(
+            df, x='Datetime', y=value, color='名称', markers=True,
+            hover_data = ['gsc'],
+            # line_shape='hv'
+        )
         y_title_text = '价格(g)' if value == '价格' else '可购买'
         fig.update_yaxes(title_text=y_title_text, **_params_update_axes)
         fig.update_xaxes(**_params_update_axes)
