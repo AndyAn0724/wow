@@ -24,12 +24,24 @@ import dash_bootstrap_components as dbc
 # dir
 DIR_ROOT = r"C:\myGit\wow"
 DIR_DATA = os.path.join(DIR_ROOT, 'data')
+# dir to store single files (for archive)
+DIR_DATA_SINGLE = os.path.join(DIR_DATA, 'single')
+# file path to store all combined data
+FPATH_DATA_ALL = os.path.join(DIR_DATA, 'data_all.csv')
+FPATH_DATA_REMOVE = os.path.join(DIR_DATA, 'remove.csv')
 _params_update_layout = dict(paper_bgcolor='white', plot_bgcolor='white')
 _params_update_axes = dict(linecolor='#e6e6e6', gridcolor='#e6e6e6')
 app = Dash(external_stylesheets=[dbc.themes.BOOTSTRAP])
 
 
 # HELPERS
+def generate_remove_list():
+    # save a list to be removed
+    ls_remove = ['割裂雕文']
+    df = pd.DataFrame({'名称': ls_remove})
+    df.to_csv(FPATH_DATA_REMOVE, index=False)
+
+
 def check_data(df):
     col1 = df.columns.tolist()[0]
     if col1 != '价格':
@@ -41,7 +53,17 @@ def check_data(df):
 
 
 def load_all_data():
-    ls_files = glob.glob(os.path.join(DIR_DATA, '*.csv'))
+    df = pd.read_csv(FPATH_DATA_ALL)
+    # remove
+    ls_remove = pd.read_csv(FPATH_DATA_REMOVE)
+    ls_remove = ls_remove['名称'].unique().tolist()
+    df = df[~df['名称'].isin(ls_remove)]
+    df['Datetime'] = pd.to_datetime(df['Datetime'])
+
+    return df
+
+def load_all_files():
+    ls_files = glob.glob(os.path.join(DIR_DATA_SINGLE, '*.csv'))
     ls_dfs = []
     for f in ls_files:
         tmp = pd.read_csv(f)
@@ -55,6 +77,12 @@ def load_all_data():
     df = pd.concat(ls_dfs, sort=False)
 
     return df
+
+
+def process_all_files():
+    df = load_all_files()
+    # refresh the combined data file
+    df.to_csv(FPATH_DATA_ALL, index=False)
 
 
 def get_unique_items():
@@ -223,9 +251,12 @@ def upload_data(n_clicks, str_csv):
     else:
         now = datetime.datetime.now()
         fname = f"{now:%Y%m%d.%H%M%S}.csv"
-        fpath = os.path.join(DIR_DATA, fname)
+        fpath = os.path.join(DIR_DATA_SINGLE, fname)
         try:
+            # save to file first
             df.to_csv(fpath, index=False)
+            # process and concat all files into one for faster process
+            process_all_files()
             alert_str = f"[{n_clicks}] SUCCESS. Uploaded to: {fpath}"
             alert_color = 'success'
         except Exception as e:
